@@ -78,23 +78,32 @@ def generate_single_entry(text: str) -> Dict:
     except Exception as e:
         logger.error(f"生成条目时发生错误: {str(e)}")
         raise
-def generate_dataset(folder_path: str, entries_per_file: int = 2) -> List[Dict]:
-    dataset = []
+def generate_dataset(folder_path: str, entries_per_file: int = 2):
     for filename in os.listdir(folder_path):
         if filename.endswith(".txt"):
             file_path = os.path.join(folder_path, filename)
-            logger.info(f"正在处理文件: {filename}")
-            text = read_file(file_path)
-            for j in range(entries_per_file):
-                logger.info(f"  生成第 {j + 1}/{entries_per_file} 个条目")
-                entry = generate_single_entry(text)
-                if entry and all(key in entry for key in ['instruction', 'input', 'output', 'text']):
-                    dataset.append(entry)
-                    logger.info(f"  成功生成 1 个完整条目")
-                else:
-                    logger.warning(f"  跳过不完整的条目")
-                time.sleep(2)  # 在请求之间增加延迟到2秒
+            dataset = generate_dataset_for_file(file_path, entries_per_file)
+            output_file = os.path.splitext(filename)[0] + ".parquet"
+            output_path = os.path.join(folder_path, output_file)
+            save_dataset_as_parquet(dataset, output_path)
+            logger.info(f"文件 {filename} 的数据集已生成并保存到 {output_path}")
+            logger.info(f"共生成 {len(dataset)} 个有效条目")
 
+    return dataset
+
+def generate_dataset_for_file(file_path: str, entries_per_file: int = 2) -> List[Dict]:
+    dataset = []
+    logger.info(f"正在处理文件: {os.path.basename(file_path)}")
+    text = read_file(file_path)
+    for j in range(entries_per_file):
+        logger.info(f"  生成第 {j + 1}/{entries_per_file} 个条目")
+        entry = generate_single_entry(text)
+        if entry and all(key in entry for key in ['instruction', 'input', 'output', 'text']):
+            dataset.append(entry)
+            logger.info(f"  成功生成 1 个完整条目")
+        else:
+            logger.warning(f"  跳过不完整的条目")
+        time.sleep(2)  # 在请求之间增加延迟到2秒
     return dataset
 
 def save_dataset_as_parquet(dataset: List[Dict], output_file: str):
@@ -117,10 +126,9 @@ def save_dataset_as_parquet(dataset: List[Dict], output_file: str):
 
 if __name__ == "__main__":
     input_folder = "./saveChunk"  # 指定输入文件夹路径
-    output_file = "instruction_dataset.parquet"
-
+    
+    items_per_file = 3  # 每个文件生成条目数
     logger.info("开始生成数据集")
-    dataset = generate_dataset(input_folder, entries_per_file=10)
-    save_dataset_as_parquet(dataset, output_file)
-    logger.info(f"数据集已生成并保存到 {output_file}")
-    logger.info(f"共生成 {len(dataset)} 个有效条目")
+    dataset = generate_dataset(input_folder, items_per_file)
+
+    logger.info(f"数据集已生成并保存到 {input_folder}")
