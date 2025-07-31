@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from tqdm import tqdm
 
 
 # 读取目录中的所有 Parquet 文件
@@ -57,16 +58,23 @@ def jsonl_to_json(jsonl_file, json_file):
 
 
 if __name__ == "__main__":
-    file_path = 'E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train-00000-of-00001.parquet'
+    file_path = 'E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/test-00000-of-00001.parquet'
+    # 设置存储路径
+    save_path = 'E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/test.jsonl'
     df = read_multiple_parquet_files(file_path)
     
     # 显示前几行数据
     print("原始数据:")
     print(df.head())
     
-    # 应用函数到每一行
-    df = df.apply(build_dataset_format, axis=1)
-   
+    # 应用函数到每一行并添加进度条
+    # df = df.apply(lambda x: build_dataset_format(x), axis=1, result_type='expand')
+    # df = df.progress_apply(lambda x: build_dataset_format(x), axis=1)
+    # 若上面的 progress_apply 不可用，可使用以下方式
+    # from tqdm import tqdm
+    tqdm.pandas()
+    df = df.progress_apply(build_dataset_format, axis=1)
+    
     # 删除无用列
     df.drop(
         columns=[
@@ -83,4 +91,4 @@ if __name__ == "__main__":
     print(df.head())
     
     # 将抽取的数据保存为新的JSONL文件
-    save_to_jsonl(df, './sft_data/TelecomQA/data/train.jsonl')
+    save_to_jsonl(df, save_path)
