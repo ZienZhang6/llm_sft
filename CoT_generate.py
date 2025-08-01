@@ -8,7 +8,7 @@ import shutil
 import logging
 from dataclasses import dataclass, field
 from typing import Dict
-
+from tqdm import tqdm
 
 def setup_logging(log_file: str):
     """
@@ -41,8 +41,8 @@ def setup_logging(log_file: str):
 
 @dataclass
 class Config:
-    model_name: str = "deepseek-70b"
-    url: str = "http://100.102.190.142:1095/v1/chat/completions"
+    model_name: str = "qwen3-0.6b"
+    url: str = "http://localhost:11434/api/chat"
     headers: Dict[str, str] = field(
         default_factory=lambda: {
             "Content-Type": "application/json"
@@ -85,19 +85,27 @@ def processed_from_model(type: str, data: Dict):
             {"role": "user", "content": content}
         ]
         # config = Config()
-        requestBody = {
-            "model": config.model_name,
-            "messages": messages,
-            "max_tokens": 32768,
-            "temperature": 0.6,
-            "repetition_penalty": 1.05
-        }
-        response = requests.post(config.url, headers=config.headers, json=requestBody)
-        if response.status_code == 200:
-            response_data = response.json()
-            model_answer = response_data['choices'][0]['message']['content']
-            return model_answer
-        logger.error(f'Idx: {data["idx"]}, Error: {response.status_code},{response.text}')
+    requestBody = {
+        "model": config.model_name,
+        "messages": messages,
+        "stream": False  # 非流式响应
+
+        # "max_tokens": 32768,
+        # "temperature": 0.6,
+        # "repetition_penalty": 1.05
+    }
+    response = requests.post(config.url, headers=config.headers, json=requestBody)
+    if response.status_code == 200:
+       
+        # for line in response.text.splitlines():    # 多线程结果分割  尝试
+        #     if line.strip():  # 跳过空行
+        #         data = json.loads(line)
+                
+        response_data = response.json()
+        model_answer = response_data['message']['content']  # 单线程
+        # model_answer = response_data['choices'][0]['message']['content']  # 这个['choices'][0] 像是多线程的结果
+        return model_answer
+    logger.error(f'Idx: {data["idx"]}, Error: {response.status_code},{response.text}')
     return None
 
 def split_jsonl_to_subfile(input_file, output_prefix, num_files):
@@ -135,7 +143,7 @@ def filter(idx, answer):
     if len(contentList) < 2:
         logger.warning(f"Idx: {idx} failed, haven't </think>!")
         return False, None
-    elif "\\boxed{" not in contentList[0] and "\\boxed {" not in contentList[1]:
+    elif "\\boxed{" not in contentList[0] and "\\boxed{" not in contentList[1]:
         logger.warning(f"Idx: {idx} failed, haven't boxed!")
         return False, None
     elif not re.search("answer", contentList[0], re.IGNORECASE) and not re.search("answer", contentList[1], re.IGNORECASE):
@@ -171,7 +179,7 @@ def save_to_jsonl(idx, question, final_answer, meta_info):
 
 def gen_cot(file_path):
     with open(file_path, 'r', encoding='utf-8') as file:
-        for line_number, data in enumerate(file, start=1):
+        for line_number, data in tqdm(enumerate(file, start=1)):
             try:
                 data = get_message(json.loads(data.strip()))
                 answer = processed_from_model("generator", data)
@@ -199,13 +207,16 @@ def multi_thread_gen_cot(config):
     for root, dirs, files in os.walk(split_tmp_folder):
         for file in files:
             file_path = os.path.join(root, file)
-            thread = threading.Thread(target=gen_cot, args=(file_path,))
-            thread.start()
-            threads.append(thread)
+            logger.info(f'Start generate cot for file: {file_path}')
+            gen_cot(file_path)
+            logger.info(f'Finished generate cot for file: {file_path}')
+    #         thread = threading.Thread(target=gen_cot, args=(file_path,))
+    #         thread.start()
+    #         threads.append(thread)
 
-    # 等待所有线程完成
-    for thread in threads:
-        thread.join()
+    # # 等待所有线程完成
+    # for thread in threads:
+    #     thread.join()
 
     logger.info(f"Finished generate cot!")
 
@@ -241,16 +252,25 @@ def judge_with_ground_truth(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--type', type=str, required=True, help='generator or judger')
+    parser.add_argument('--type', type=str,default='generator', help='generator or judger')
     args = parser.parse_args()
     config = Config()
     logger = setup_logging("error.log")
     if args.type == 'generator':
-        config.model_name = "deepseek-70b"
-        config.url = "http://xxx.xxxxxxxxxxxxx/v1/chat/completions"  # mindie服务ip:端口号
+        config.model_name = "qwen3:0.6b"
+        config.url = "http://localhost:11434/api/chat"  #
+        config.input_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train.jsonl"  # 输入文件路径
+        config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_telecom.jsonl"
+        config.output_judge_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_judge_telecom.jsonl"
+        
+        # 如果不存在输出目录，则创建
+        if not os.path.exists(os.path.dirname(config.output_gen_path)):
+            os.makedirs(os.path.dirname(config.output_gen_path))
+
         multi_thread_gen_cot(config)
+        
     if args.type == 'judger':
-        config.model_name = "qwen2.5-72b-instruct"
+        config.model_name = "qwen2.5:7b"
         config.url = "http://xxx.xxx.xxx.xxx:xxx/v1/chat/completions"  # mindie服务ip:端口号
         wrong_answer_idx = judge_with_ground_truth(config)
         logger.warning(f"Wrong Answer Idx: {wrong_answer_idx}")
