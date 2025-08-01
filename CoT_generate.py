@@ -50,6 +50,7 @@ class Config:
     )
 
     input_path: str = "/mnt/metis/official_metis_data/sft_data/TelecomQA/data/train.jsonl"
+    split_tmp_folder: str = "tmp"
     output_gen_path: str = "output/deepspeed70_gen_telecom.jsonl"
     output_judge_path: str = "output/deepspeed70_gen_judge_telecom.jsonl"
 
@@ -108,10 +109,10 @@ def processed_from_model(type: str, data: Dict):
     logger.error(f'Idx: {data["idx"]}, Error: {response.status_code},{response.text}')
     return None
 
-def split_jsonl_to_subfile(input_file, output_prefix, num_files):
+def split_jsonl_to_subfile(input_file, output_prefix, num_files,split_tmp_folder):
     """分割JSONL文件并返回生成的文件列表"""
     # 确保临时目录存在
-    os.makedirs("./tmp")  # 如有必要, exist_ok=True
+    # os.makedirs("./tmp")  # 如有必要, exist_ok=True
     with open(input_file, 'r') as f:
         lines = f.readlines()
 
@@ -125,7 +126,7 @@ def split_jsonl_to_subfile(input_file, output_prefix, num_files):
         num_lines = base + (1 if i < remainder else 0)
 
         # 生成输出文件名
-        output_file = f"tmp/{output_prefix}_{i + 1}.jsonl"
+        output_file = f"{split_tmp_folder}/{output_prefix}_{i + 1}.jsonl"
         file_list.append(output_file)
         # 写入分割后的文件
         with open(output_file, 'w') as f_out:
@@ -178,28 +179,40 @@ def save_to_jsonl(idx, question, final_answer, meta_info):
         file.write(json.dumps(dictData, ensure_ascii=False) + "\n")
 
 def gen_cot(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        for line_number, data in tqdm(enumerate(file, start=1)):
-            try:
-                data = get_message(json.loads(data.strip()))
-                answer = processed_from_model("generator", data)
 
-                if answer is not None:
-                    isValid, answer = filter(data['idx'], answer)
-                    if isValid is True:
-                        # print(f"Idx {data['idx']}: Answer:{answer}")
-                        save_to_jsonl(data['idx'], data['question'], answer, data['meta_info'])
+    # 获取当前线程信息
+    current_thread = threading.current_thread()
+    logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 开始处理文件: {file_path}")
+    logger.info(f"当前活跃线程数: {threading.active_count()}")
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            for line_number, data in tqdm(enumerate(file, start=1)):
+                try:
+                    data = get_message(json.loads(data.strip()))
+                    answer = processed_from_model("generator", data)
 
-            except json.JSONDecodeError as e:
-                logger.error(f'parse {line_number} err: {e}')
+                    if answer is not None:
+                        isValid, answer = filter(data['idx'], answer)
+                        if isValid is True:
+                            # print(f"Idx {data['idx']}: Answer:{answer}")
+                            save_to_jsonl(data['idx'], data['question'], answer, data['meta_info'])
 
+                except json.JSONDecodeError as e:
+                    logger.error(f'parse {line_number} err: {e}')
+    except Exception as e:
+        logger.error(f"线程 {current_thread.name} 处理出错: {str(e)}")
+    finally:
+        logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 完成处理文件: {file_path}")
+        logger.info(f"当前活跃线程数: {threading.active_count()}")
 
 def multi_thread_gen_cot(config):
-    split_tmp_folder = "tmp"
+    split_tmp_folder = config.split_tmp_folder
     
     if not os.path.exists(split_tmp_folder):
+        os.makedirs(split_tmp_folder)
         logger.info(f'Start split files...')
-        subfile_list = split_jsonl_to_subfile(config.input_path, "output", 64)
+        subfile_list = split_jsonl_to_subfile(config.input_path, "output", 64,split_tmp_folder)
         logger.info(f'File split to: {subfile_list}')
     
     logger.info(f'Start generate cot...')
@@ -208,15 +221,23 @@ def multi_thread_gen_cot(config):
         for file in files:
             file_path = os.path.join(root, file)
             logger.info(f'Start generate cot for file: {file_path}')
-            gen_cot(file_path)
-            logger.info(f'Finished generate cot for file: {file_path}')
-    #         thread = threading.Thread(target=gen_cot, args=(file_path,))
-    #         thread.start()
-    #         threads.append(thread)
 
-    # # 等待所有线程完成
-    # for thread in threads:
-    #     thread.join()
+            # # 单线程执行
+            # gen_cot(file_path)
+            # logger.info(f'Finished generate cot for file: {file_path}')
+            
+            # 多线程执行
+           # 为线程添加名称以便识别
+            thread_name = f"FileProcessor-{os.path.basename(file_path)}"
+            thread = threading.Thread(target=gen_cot, args=(file_path,), name=thread_name)
+            thread.start()
+            # 记录线程启动信息和当前活跃线程数
+            logger.info(f"线程 {thread.name} (ID: {thread.ident}) 已启动 | 当前活跃线程数: {threading.active_count()}")
+            threads.append(thread)
+
+    # 等待所有线程完成
+    for thread in threads:
+        thread.join()
 
     logger.info(f"Finished generate cot!")
 
@@ -260,6 +281,7 @@ if __name__ == "__main__":
         config.model_name = "qwen3:0.6b"
         config.url = "http://localhost:11434/api/chat"  #
         config.input_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train.jsonl"  # 输入文件路径
+        config.split_tmp_folder = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/tmp"  # 临时文件目录
         config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_telecom.jsonl"
         config.output_judge_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_judge_telecom.jsonl"
         
