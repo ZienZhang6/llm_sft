@@ -273,7 +273,8 @@ def judge_with_ground_truth(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--type', type=str,default='generator', help='generator or judger')
+    parser.add_argument('--type', type=str,default='judger', help='generator or judger')
+
     args = parser.parse_args()
     config = Config()
     logger = setup_logging("error.log")
@@ -283,7 +284,6 @@ if __name__ == "__main__":
         config.input_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train.jsonl"  # 输入文件路径
         config.split_tmp_folder = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/tmp"  # 临时文件目录
         config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_telecom.jsonl"
-        config.output_judge_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_judge_telecom.jsonl"
         
         # 如果不存在输出目录，则创建
         if not os.path.exists(os.path.dirname(config.output_gen_path)):
@@ -292,7 +292,10 @@ if __name__ == "__main__":
         multi_thread_gen_cot(config)
         
     if args.type == 'judger':
-        config.model_name = "qwen2.5:7b"
-        config.url = "http://xxx.xxx.xxx.xxx:xxx/v1/chat/completions"  # mindie服务ip:端口号
+        config.model_name = "qwen2.5:3b"
+        config.url = "http://localhost:11434/api/chat"  #
+        config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_telecom.jsonl"
+        config.output_judge_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen2.5_3b_judge_telecom.jsonl"  # 输出文件路径
+
         wrong_answer_idx = judge_with_ground_truth(config)
         logger.warning(f"Wrong Answer Idx: {wrong_answer_idx}")
