@@ -9,6 +9,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict
 from tqdm import tqdm
+from zhipuai import ZhipuAI
+from concurrent.futures import ThreadPoolExecutor  # 添加线程池导入
+
+client = ZhipuAI(api_key="cbd4676a6366e635ae13e192d0a3cd02.9mqyd68GGiF2p5p8")  # 替换为实际API Key
 
 def setup_logging(log_file: str):
     """
@@ -53,6 +57,7 @@ class Config:
     split_tmp_folder: str = "tmp"
     output_gen_path: str = "output/deepspeed70_gen_telecom.jsonl"
     output_judge_path: str = "output/deepspeed70_gen_judge_telecom.jsonl"
+    max_threads: int = 10  # 添加最大线程数配置，默认10
 
 class PromptUtils:
     @staticmethod
@@ -95,17 +100,40 @@ def processed_from_model(type: str, data: Dict):
         # "temperature": 0.6,
         # "repetition_penalty": 1.05
     }
-    response = requests.post(config.url, headers=config.headers, json=requestBody)
-    if response.status_code == 200:
-       
-        # for line in response.text.splitlines():    # 多线程结果分割  尝试
-        #     if line.strip():  # 跳过空行
-        #         data = json.loads(line)
-                
-        response_data = response.json()
-        model_answer = response_data['message']['content']  # 单线程
-        # model_answer = response_data['choices'][0]['message']['content']  # 这个['choices'][0] 像是多线程的结果
+    
+    # glm 模型的返回解析
+    # 初始化ZhipuAI客户端
+    response = client.chat.completions.create(
+        model="glm-z1-flash",  # glm-4.5-flash
+        messages=messages
+    )
+    if response:
+        # 解析GLM响应
+        response_data = response.model_dump_json()
+        response_dict = json.loads(response_data)
+
+        # # GLM-4.5-flash模型的返回解析 # #
+        # # 提取reasoning_content和content
+        # reasoning_content = response_dict.get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
+        # content = response_dict.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        # # 拼接Qwen3格式的回复 适应整体的代码
+        # model_answer = f"<think>{reasoning_content}\n</think>\n\n{content}"
+
+        # # GLM-z1-flash模型的返回解析 # # 
+        model_answer = response_dict['choices'][0]['message']['content']
+
         return model_answer
+
+
+    # # qwen 模型的返回解析
+    # response = requests.post(config.url, headers=config.headers, json=requestBody)
+
+    # if response.status_code == 200:
+    #     response_data = response.json()
+    #     model_answer = response_data['message']['content']  # qwen 的返回
+    #     return model_answer
+    
     logger.error(f'Idx: {data["idx"]}, Error: {response.status_code},{response.text}')
     return None
 
@@ -180,12 +208,12 @@ def save_to_jsonl(idx, question, final_answer, meta_info):
 
 def gen_cot(file_path):
 
-    # 获取当前线程信息
-    current_thread = threading.current_thread()
-    logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 开始处理文件: {file_path}")
-    logger.info(f"当前活跃线程数: {threading.active_count()}")
+    # # 获取当前线程信息
+    # current_thread = threading.current_thread()
+    # logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 开始处理文件: {file_path}")
+    # logger.info(f"当前活跃线程数: {threading.active_count()}")
     
-    try:
+    # try:
         with open(file_path, 'r', encoding='utf-8') as file:
             for line_number, data in tqdm(enumerate(file, start=1)):
                 try:
@@ -200,11 +228,11 @@ def gen_cot(file_path):
 
                 except json.JSONDecodeError as e:
                     logger.error(f'parse {line_number} err: {e}')
-    except Exception as e:
-        logger.error(f"线程 {current_thread.name} 处理出错: {str(e)}")
-    finally:
-        logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 完成处理文件: {file_path}")
-        logger.info(f"当前活跃线程数: {threading.active_count()}")
+    # except Exception as e:
+    #     logger.error(f"线程 {current_thread.name} 处理出错: {str(e)}")
+    # finally:
+    #     logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 完成处理文件: {file_path}")
+    #     logger.info(f"当前活跃线程数: {threading.active_count()}")
 
 def multi_thread_gen_cot(config):
     split_tmp_folder = config.split_tmp_folder
@@ -216,28 +244,36 @@ def multi_thread_gen_cot(config):
         logger.info(f'File split to: {subfile_list}')
     
     logger.info(f'Start generate cot...')
-    threads = []
+    # # 使用ThreadPoolExecutor控制最大线程数
+    # with ThreadPoolExecutor(max_workers=config.max_threads) as executor:
+        
+    #     # threads = []
+    #     futures = []
     for root, dirs, files in os.walk(split_tmp_folder):
         for file in files:
             file_path = os.path.join(root, file)
             logger.info(f'Start generate cot for file: {file_path}')
 
-            # # 单线程执行
-            # gen_cot(file_path)
-            # logger.info(f'Finished generate cot for file: {file_path}')
-            
-            # 多线程执行
-           # 为线程添加名称以便识别
-            thread_name = f"FileProcessor-{os.path.basename(file_path)}"
-            thread = threading.Thread(target=gen_cot, args=(file_path,), name=thread_name)
-            thread.start()
-            # 记录线程启动信息和当前活跃线程数
-            logger.info(f"线程 {thread.name} (ID: {thread.ident}) 已启动 | 当前活跃线程数: {threading.active_count()}")
-            threads.append(thread)
+            # 单线程执行 (测试)
+            gen_cot(file_path)
+            logger.info(f'Finished generate cot for file: {file_path}')
+                
+                # # 多线程执行
+                # # 提交任务到线程池
+                # future = executor.submit(gen_cot, file_path)
+                # futures.append(future)
+         
+        #     # # 为线程添加名称以便识别
+        #     #     thread_name = f"FileProcessor-{os.path.basename(file_path)}"
+        #     #     thread = threading.Thread(target=gen_cot, args=(file_path,), name=thread_name)
+        #     #     thread.start()
+        #     #     # 记录线程启动信息和当前活跃线程数
+        #     #     logger.info(f"线程 {thread.name} (ID: {thread.ident}) 已启动 | 当前活跃线程数: {threading.active_count()}")
+        #     #     threads.append(thread)
 
-    # 等待所有线程完成
-    for thread in threads:
-        thread.join()
+        # # 等待所有线程完成
+        # for future in futures:
+        #     future.result()
 
     logger.info(f"Finished generate cot!")
 
@@ -273,17 +309,18 @@ def judge_with_ground_truth(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--type', type=str,default='judger', help='generator or judger')
+    parser.add_argument('--type', type=str,default='generator', help='generator or judger')
 
     args = parser.parse_args()
     config = Config()
     logger = setup_logging("error.log")
     if args.type == 'generator':
-        config.model_name = "qwen3:0.6b"
+        config.model_name = "glm-z1-flash"  # 使用GLM模型
         config.url = "http://localhost:11434/api/chat"  #
         config.input_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train.jsonl"  # 输入文件路径
         config.split_tmp_folder = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/tmp"  # 临时文件目录
-        config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/qwen3_0.6b_gen_telecom.jsonl"
+        config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/glm_z1_flash_gen_telecom.jsonl"  # 输出文件路径
+        config.max_threads = 1
         
         # 如果不存在输出目录，则创建
         if not os.path.exists(os.path.dirname(config.output_gen_path)):
