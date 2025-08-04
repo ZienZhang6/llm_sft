@@ -208,12 +208,12 @@ def save_to_jsonl(idx, question, final_answer, meta_info):
 
 def gen_cot(file_path):
 
-    # # 获取当前线程信息
-    # current_thread = threading.current_thread()
-    # logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 开始处理文件: {file_path}")
-    # logger.info(f"当前活跃线程数: {threading.active_count()}")
+    # 获取当前线程信息
+    current_thread = threading.current_thread()
+    logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 开始处理文件: {file_path}")
+    logger.info(f"当前活跃线程数: {threading.active_count()}")
     
-    # try:
+    try:
         with open(file_path, 'r', encoding='utf-8') as file:
             for line_number, data in tqdm(enumerate(file, start=1)):
                 try:
@@ -228,11 +228,11 @@ def gen_cot(file_path):
 
                 except json.JSONDecodeError as e:
                     logger.error(f'parse {line_number} err: {e}')
-    # except Exception as e:
-    #     logger.error(f"线程 {current_thread.name} 处理出错: {str(e)}")
-    # finally:
-    #     logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 完成处理文件: {file_path}")
-    #     logger.info(f"当前活跃线程数: {threading.active_count()}")
+    except Exception as e:
+        logger.error(f"线程 {current_thread.name} 处理出错: {str(e)}")
+    finally:
+        logger.info(f"线程 {current_thread.name} (ID: {current_thread.ident}) 完成处理文件: {file_path}")
+        logger.info(f"当前活跃线程数: {threading.active_count()}")
 
 def multi_thread_gen_cot(config):
     split_tmp_folder = config.split_tmp_folder
@@ -244,24 +244,24 @@ def multi_thread_gen_cot(config):
         logger.info(f'File split to: {subfile_list}')
     
     logger.info(f'Start generate cot...')
-    # # 使用ThreadPoolExecutor控制最大线程数
-    # with ThreadPoolExecutor(max_workers=config.max_threads) as executor:
+    # 使用ThreadPoolExecutor控制最大线程数
+    with ThreadPoolExecutor(max_workers=config.max_threads) as executor:
         
-    #     # threads = []
-    #     futures = []
-    for root, dirs, files in os.walk(split_tmp_folder):
-        for file in files:
-            file_path = os.path.join(root, file)
-            logger.info(f'Start generate cot for file: {file_path}')
+        # threads = []
+        futures = []
+        for root, dirs, files in os.walk(split_tmp_folder):
+            for file in files:
+                file_path = os.path.join(root, file)
+                logger.info(f'Start generate cot for file: {file_path}')
 
-            # 单线程执行 (测试)
-            gen_cot(file_path)
-            logger.info(f'Finished generate cot for file: {file_path}')
+                # 单线程执行 (测试)
+                gen_cot(file_path)
+                logger.info(f'Finished generate cot for file: {file_path}')
                 
-                # # 多线程执行
-                # # 提交任务到线程池
-                # future = executor.submit(gen_cot, file_path)
-                # futures.append(future)
+                # 多线程执行
+                # 提交任务到线程池
+                future = executor.submit(gen_cot, file_path)
+                futures.append(future)
          
         #     # # 为线程添加名称以便识别
         #     #     thread_name = f"FileProcessor-{os.path.basename(file_path)}"
@@ -271,9 +271,9 @@ def multi_thread_gen_cot(config):
         #     #     logger.info(f"线程 {thread.name} (ID: {thread.ident}) 已启动 | 当前活跃线程数: {threading.active_count()}")
         #     #     threads.append(thread)
 
-        # # 等待所有线程完成
-        # for future in futures:
-        #     future.result()
+        # 等待所有线程完成
+        for future in futures:
+            future.result()
 
     logger.info(f"Finished generate cot!")
 
@@ -320,7 +320,7 @@ if __name__ == "__main__":
         config.input_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/train.jsonl"  # 输入文件路径
         config.split_tmp_folder = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/tmp"  # 临时文件目录
         config.output_gen_path = "E:/learning/llm_sft/Telecom-QA-MultipleChoice/data/output/glm_z1_flash_gen_telecom.jsonl"  # 输出文件路径
-        config.max_threads = 1
+        config.max_threads = 30 # 设置最大线程数
         
         # 如果不存在输出目录，则创建
         if not os.path.exists(os.path.dirname(config.output_gen_path)):
